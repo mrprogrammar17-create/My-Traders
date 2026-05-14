@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // User Rules
+    match /users/{userId} {
+      function isValidUser(data) {
+        return data.keys().hasAll(['uid', 'email']) &&
+               data.uid is string &&
+               data.email is string;
+      }
+
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && 
+                      (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['demoBalance', 'liveBalance', 'displayName', 'photoURL']));
+    }
+
+    // Trade Rules
+    match /users/{userId}/trades/{tradeId} {
+      function isValidTrade(data) {
+        return data.keys().hasAll(['userId', 'type', 'entryPrice', 'amount', 'status', 'createdAt', 'accountType']) &&
+               data.userId == request.auth.uid &&
+               data.type in ['long', 'short'] &&
+               data.entryPrice is number &&
+               data.amount is number &&
+               data.status in ['open', 'closed'] &&
+               data.accountType in ['live', 'demo'] &&
+               data.createdAt is timestamp;
+      }
+
+      allow list, get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidTrade(request.resource.data);
+      allow update: if isOwner(userId) && 
+                      isValidTrade(request.resource.data) &&
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'exitPrice', 'pnl', 'closedAt']);
+    }
+  }
+}
